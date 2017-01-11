@@ -316,10 +316,9 @@ reference(void) {
 }
 //------------------------------------------------------------------------
 void
-gen_neighlist() {
-  // std::random_device seed_gen;
-  std::mt19937 mt(10);
-  std::uniform_int_distribution<> dist(0, M - 1);
+gen_neighlist(const int seed) {
+  std::mt19937 mt(seed);
+  std::uniform_int_distribution<> dist(0, N - 1);
   std::generate(list, list + M, [&mt, &dist](){return dist(mt);});
 }
 //------------------------------------------------------------------------
@@ -342,16 +341,21 @@ main(int argc, char* argv[]) {
     M = std::atoi(argv[2]);
   }
 
+  int rand_seed = 10;
+  if (argc >= 4) {
+    rand_seed = std::atoi(argv[3]);
+  }
+
   bool verbose = false;
-  if (argc == 4)
-    if (std::atoi(argv[3]))
+  if (argc == 5)
+    if (std::atoi(argv[4]))
       verbose = true;
 
   q = new double4 [N];
   p = new double4 [N];
   list = new int32_t [M];
 
-  gen_neighlist();
+  gen_neighlist(rand_seed);
 
   std::cout << N << " " << M << " ";
 

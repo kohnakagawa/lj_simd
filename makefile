@@ -1,6 +1,6 @@
-TARGET= aos.out aos_pair.out aos_intrin.out soa.out soa_pair.out soa_intrin.out aos_intrin_mat_transpose.out aos_brute_force1x4.out aos_brute_force4x1.out aos_brute_force_ref.out aos_brute_force1x4_recless.out aos_brute_force4x1_recless.out aos_brute_force_ref_rectless.out
+TARGET= aos.out aos_pair.out aos_intrin.out soa.out soa_pair.out soa_intrin.out aos_intrin_mat_transpose.out comp_1x4.out comp_4x1.out comp_ref.out
 
-ASM = force_aos.s force_soa.s force_aos_brute.s
+ASM = force_aos.s force_soa.s comp_4x1_1x4.s
 
 all: $(TARGET) $(ASM)
 
@@ -30,23 +30,14 @@ soa_pair.out: force_soa.cpp
 soa_intrin.out: force_soa.cpp
 	icpc -O3 -xHOST -std=c++11 -DINTRIN $< -o $@
 
-aos_brute_force1x4.out: force_aos_brute.cpp
+comp_1x4.out: comp_4x1_1x4.cpp
 	icpc -O3 -xHOST -std=c++11 -DUSE1x4 $< -o $@
 
-aos_brute_force4x1.out: force_aos_brute.cpp
+comp_4x1.out: comp_4x1_1x4.cpp
 	icpc -O3 -xHOST -std=c++11 -DUSE4x1 $< -o $@
 
-aos_brute_force_ref.out: force_aos_brute.cpp
+comp_ref.out: comp_4x1_1x4.cpp
 	icpc -O3 -xHOST -std=c++11 -DREFERENCE $< -o $@
-
-aos_brute_force1x4_recless.out: force_aos_brute.cpp
-	icpc -O3 -xHOST -std=c++11 -DUSE1x4_REACTLESS $< -o $@
-
-aos_brute_force4x1_recless.out: force_aos_brute.cpp
-	icpc -O3 -xHOST -std=c++11 -DUSE4x1_REACTLESS $< -o $@
-
-aos_brute_force_ref_rectless.out: force_aos_brute.cpp
-	icpc -O3 -xHOST -std=c++11 -DREFERENCE_REACTLESS $< -o $@
 
 clean:
 	rm -f $(TARGET)

@@ -1,21 +1,22 @@
 #!/bin/sh
 
-exec="./aos_brute_force1x4.out"; out_file="force1x4.txt"
-# exec="./aos_brute_force4x1.out"; out_file="force4x1.txt"
-# exec="./aos_brute_force_ref.out"; out_file="force_ref.txt"
-# exec="./aos_brute_force1x4_recless.out"; out_file="force1x4_recless.txt"
-# exec="./aos_brute_force4x1_recless.out"; out_file="force4x1_recless.txt"
-# exec="./aos_brute_force_ref_rectless.out"; out_file="force_ref_recless.txt"
+execs=("./comp_1x4.out" "./comp_4x1.out" "./comp_ref.out")
+files=("1x4.txt" "4x1.txt" "ref.txt")
+Ni="100003"
+seed=$RANDOM
 
-rm $out_file
-touch $out_file
+make ${execs[@]}
 
-for i in `seq 20 20 200`
+for i in `seq 0 2`
 do
-    $exec $i >> $out_file
+    rm -f ${files[$i]}
+    touch ${files[$i]}
+    for Nj in `seq 4 1 200`
+    do
+        ${execs[$i]} $Ni $Nj $seed >> ${files[$i]}
+    done
 done
 
-for i in `seq 500 500 10000`
-do
-    $exec $i >> $out_file
-done
+echo "# num_iloop num_jloop 1x4 4x1 ref" > result_$seed.txt
+paste 1x4.txt 4x1.txt ref.txt | awk '{print $1, $2, $3, $7, $11, $4}' >> result_$seed.txt
+rm ${files[@]}
