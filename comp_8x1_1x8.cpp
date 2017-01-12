@@ -45,15 +45,28 @@ hadd_v8sf(v8sf sum) {
   return _mm256_extractf128_ps(sum, 0);
 }
 //------------------------------------------------------------------------
+static inline void
+transpose_4x4x2(v8sf& va,
+                v8sf& vb,
+                v8sf& vc,
+                v8sf& vd) {
+  v8sf t_a = _mm256_blend_ps(va, _mm256_castsi256_ps(_mm256_bslli_epi128(_mm256_castps_si256(vb), 4)), 0xaa);
+  v8sf t_b = _mm256_blend_ps(_mm256_castsi256_ps(_mm256_bsrli_epi128(_mm256_castps_si256(va), 4)), vb, 0xaa);
+  v8sf t_c = _mm256_blend_ps(vc, _mm256_castsi256_ps(_mm256_bslli_epi128(_mm256_castps_si256(vd), 4)), 0xaa);
+  v8sf t_d = _mm256_blend_ps(_mm256_castsi256_ps(_mm256_bsrli_epi128(_mm256_castps_si256(vc), 4)), vd, 0xaa);
+
+  va = _mm256_shuffle_ps(t_a, t_c, 0x44);
+  vb = _mm256_shuffle_ps(t_b, t_d, 0x44);
+  vc = _mm256_shuffle_ps(t_a, t_c, 0xee);
+  vd = _mm256_shuffle_ps(t_b, t_d, 0xee);
+}
+//------------------------------------------------------------------------
 void
 calc_intrin1x8() {
-  const v8sf vc24 = _mm256_set_ps(24.0f * dt, 24.0f * dt, 24.0f * dt, 24.0f * dt,
-                                  24.0f * dt, 24.0f * dt, 24.0f * dt, 24.0f * dt);
-  const v8sf vc48 = _mm256_set_ps(48.0f * dt, 48.0f * dt, 48.0f * dt, 48.0f * dt,
-                                  48.0f * dt, 48.0f * dt, 48.0f * dt, 48.0f * dt);
-  const v8sf veps2 = _mm256_set_ps(eps2, eps2, eps2, eps2,
-                                   eps2, eps2, eps2, eps2);
-  const v8sf vzero = _mm256_setzero_ps();
+  const v8sf vc24 = _mm256_set1_ps(24.0f * dt);
+  const v8sf vc48 = _mm256_set1_ps(48.0f * dt);
+  const v8sf veps2 = _mm256_set1_ps(eps2);
+  v8sf vpw = _mm256_setzero_ps();
   for (int i = 0; i < N; i++) {
     const v8sf vqxi = _mm256_broadcast_ss(&q[i].x);
     const v8sf vqyi = _mm256_broadcast_ss(&q[i].y);
@@ -98,70 +111,51 @@ calc_intrin1x8() {
       v8sf vr6 = vr2 * vr2 * vr2;
       v8sf vdf = (vc24 * vr6 - vc48) / (vr6 * vr6 * vr2);
 
-      v8sf vdfx = vdf * vdx;
-      v8sf vdfy = vdf * vdy;
-      v8sf vdfz = vdf * vdz;
+      vpxi += vdf * vdx;
+      vpyi += vdf * vdy;
+      vpzi += vdf * vdz;
 
-      vpxi += vdfx;
-      vpyi += vdfy;
-      vpzi += vdfz;
+      vpxj -= vdf * vdx;
+      vpyj -= vdf * vdy;
+      vpzj -= vdf * vdz;
 
-      vpxj -= vdfx;
-      vpyj -= vdfy;
-      vpzj -= vdfz;
+      transpose_4x4x2(vpxj, vpyj, vpzj, vpw);
+      /*
+        vpxj = {vpja, vpje}
+        vpyj = {vpjb, vpjf}
+        vpzj = {vpjc, vpjg}
+        vpw  = {vpjd, vpjh}
+       */
 
-      v4sf vpj_a = _mm256_extractf128_ps(vpxj, 0);
-      v4sf vpj_b = _mm256_extractf128_ps(vpyj, 0);
-      v4sf vpj_c = _mm256_extractf128_ps(vpzj, 0);
-      v4sf vpj_d = _mm_setzero_ps();
-
-      v4sf vpj_e = _mm256_extractf128_ps(vpxj, 1);
-      v4sf vpj_f = _mm256_extractf128_ps(vpyj, 1);
-      v4sf vpj_g = _mm256_extractf128_ps(vpzj, 1);
-      v4sf vpj_h = _mm_setzero_ps();
-
-      _MM_TRANSPOSE4_PS(vpj_a, vpj_b, vpj_c, vpj_d);
-      _MM_TRANSPOSE4_PS(vpj_e, vpj_f, vpj_g, vpj_h);
-
-      _mm_store_ps((float*)(p + j_a), vpj_a);
-      _mm_store_ps((float*)(p + j_b), vpj_b);
-      _mm_store_ps((float*)(p + j_c), vpj_c);
-      _mm_store_ps((float*)(p + j_d), vpj_d);
-      _mm_store_ps((float*)(p + j_e), vpj_e);
-      _mm_store_ps((float*)(p + j_f), vpj_f);
-      _mm_store_ps((float*)(p + j_g), vpj_g);
-      _mm_store_ps((float*)(p + j_h), vpj_h);
+      _mm256_storeu2_m128((float*)(p + j_e), (float*)(p + j_a), vpxj);
+      _mm256_storeu2_m128((float*)(p + j_f), (float*)(p + j_b), vpyj);
+      _mm256_storeu2_m128((float*)(p + j_g), (float*)(p + j_c), vpzj);
+      _mm256_storeu2_m128((float*)(p + j_h), (float*)(p + j_d), vpw );
     }
     // horizontal sum
-    v4sf vpi_a = _mm256_extractf128_ps(vpxi, 0);
-    v4sf vpi_b = _mm256_extractf128_ps(vpyi, 0);
-    v4sf vpi_c = _mm256_extractf128_ps(vpzi, 0);
-    v4sf vpi_d = _mm_setzero_ps();
-
-    v4sf vpi_e = _mm256_extractf128_ps(vpxi, 1);
-    v4sf vpi_f = _mm256_extractf128_ps(vpyi, 1);
-    v4sf vpi_g = _mm256_extractf128_ps(vpzi, 1);
-    v4sf vpi_h = _mm_setzero_ps();
-
-    _MM_TRANSPOSE4_PS(vpi_a, vpi_b, vpi_c, vpi_d);
-    _MM_TRANSPOSE4_PS(vpi_e, vpi_f, vpi_g, vpi_h);
-
-    v4sf vpi = vpi_a + vpi_b + vpi_c + vpi_d
-      + vpi_e + vpi_f + vpi_g + vpi_h;
+    transpose_4x4x2(vpxi, vpyi, vpzi, vpw);
+    /*
+      vpxi = {vpia, vpie}
+      vpyi = {vpib, vpif}
+      vpzi = {vpic, vpig}
+      vpw  = {vpid, vpih}
+     */
+    v8sf vpi_hilo = vpxi + vpyi + vpzi + vpw;
+    v8sf vpi_lohi = _mm256_permute2f128_ps(vpi_hilo, vpi_hilo, 0x01);
+    v8sf vpi = vpi_hilo + vpi_lohi;
 
     // store
-    vpi += static_cast<v4sf>(_mm_load_ps((float*)(p + i)));
-    _mm_store_ps((float*)(p + i), vpi);
+    vpi += static_cast<v8sf>(_mm256_loadu_ps((float*)(p + i)));
+    _mm_store_ps((float*)(p + i), _mm256_castps256_ps128(vpi));
 
     for (int k = (M / 8) * 8; k < M; k++) {
       const auto j = list[k];
       const auto dx = q[j].x - q[i].x;
       const auto dy = q[j].y - q[i].y;
       const auto dz = q[j].z - q[i].z;
-      const auto r2 = (dx * dx + dy * dy + dz * dz);
+      const auto r2 = (eps2 + dx * dx + dy * dy + dz * dz);
       const auto r6 = r2 * r2 * r2;
-      auto df = (24.0f * r6 - 48.0f) / (r6 * r6 * r2) * dt;
-      if (i == j) df = 0.0f;
+      const auto df = (24.0f * dt * r6 - 48.0f * dt) / (r6 * r6 * r2);
       p[i].x += df * dx;
       p[i].y += df * dy;
       p[i].z += df * dz;
@@ -174,13 +168,10 @@ calc_intrin1x8() {
 //------------------------------------------------------------------------
 void
 calc_intrin8x1() {
-  const v8sf vc24 = _mm256_set_ps(24.0f * dt, 24.0f * dt, 24.0f * dt, 24.0f * dt,
-                                  24.0f * dt, 24.0f * dt, 24.0f * dt, 24.0f * dt);
-  const v8sf vc48 = _mm256_set_ps(48.0f * dt, 48.0f * dt, 48.0f * dt, 48.0f * dt,
-                                  48.0f * dt, 48.0f * dt, 48.0f * dt, 48.0f * dt);
-  const v8sf veps2 = _mm256_set_ps(eps2, eps2, eps2, eps2,
-                                   eps2, eps2, eps2, eps2);
-  const v8sf vzero = _mm256_setzero_ps();
+  const v8sf vc24 = _mm256_set1_ps(24.0f * dt);
+  const v8sf vc48 = _mm256_set1_ps(48.0f * dt);
+  const v8sf veps2 = _mm256_set1_ps(eps2);
+  v8sf vpw = _mm256_setzero_ps();
   for (int i = 0; i < (N / 8) * 8; i += 8) {
     v8si vindex = _mm256_set_epi32(i + 7, i + 6, i + 5, i + 4,
                                    i + 3, i + 2, i + 1, i);
@@ -216,35 +207,20 @@ calc_intrin8x1() {
       v8sf vr6 = vr2 * vr2 * vr2;
       v8sf vdf = (vc24 * vr6 - vc48) / (vr6 * vr6 * vr2);
 
-      v8sf vdfx = vdf * vdx;
-      v8sf vdfy = vdf * vdy;
-      v8sf vdfz = vdf * vdz;
+      vpxi += vdf * vdx;
+      vpyi += vdf * vdy;
+      vpzi += vdf * vdz;
 
-      vpxi += vdfx;
-      vpyi += vdfy;
-      vpzi += vdfz;
+      vpxj -= vdf * vdx;
+      vpyj -= vdf * vdy;
+      vpzj -= vdf * vdz;
 
-      vpxj -= vdfx;
-      vpyj -= vdfy;
-      vpzj -= vdfz;
+      transpose_4x4x2(vpxj, vpyj, vpzj, vpw);
+      v8sf vpj_hilo = vpxj + vpyj + vpzj + vpw;
+      v8sf vpj_lohi = _mm256_permute2f128_ps(vpj_hilo, vpj_hilo, 0x01);
+      v8sf vpj = vpj_hilo + vpj_lohi;
 
-      v4sf vpj_a = _mm256_extractf128_ps(vpxj, 0);
-      v4sf vpj_b = _mm256_extractf128_ps(vpyj, 0);
-      v4sf vpj_c = _mm256_extractf128_ps(vpzj, 0);
-      v4sf vpj_d = _mm_setzero_ps();
-
-      v4sf vpj_e = _mm256_extractf128_ps(vpxj, 1);
-      v4sf vpj_f = _mm256_extractf128_ps(vpyj, 1);
-      v4sf vpj_g = _mm256_extractf128_ps(vpzj, 1);
-      v4sf vpj_h = _mm_setzero_ps();
-
-      _MM_TRANSPOSE4_PS(vpj_a, vpj_b, vpj_c, vpj_d);
-      _MM_TRANSPOSE4_PS(vpj_e, vpj_f, vpj_g, vpj_h);
-
-      v4sf vpj = vpj_a + vpj_b + vpj_c + vpj_d
-        + vpj_e + vpj_f + vpj_g + vpj_h;
-
-      _mm_store_ps((float*)(p + j), vpj);
+      _mm_store_ps((float*)(p + j), _mm256_castps256_ps128(vpj));
     }
 
     vpxi += static_cast<v8sf>(_mm256_i32gather_ps(reinterpret_cast<const float*>(&p[0].x),
@@ -254,23 +230,12 @@ calc_intrin8x1() {
     vpzi += static_cast<v8sf>(_mm256_i32gather_ps(reinterpret_cast<const float*>(&p[0].z),
                                                   vindex, 4));
 
-    v4sf vpi_a = _mm256_extractf128_ps(vpxi, 0);
-    v4sf vpi_b = _mm256_extractf128_ps(vpyi, 0);
-    v4sf vpi_c = _mm256_extractf128_ps(vpzi, 0);
-    v4sf vpi_d = _mm_setzero_ps();
+    transpose_4x4x2(vpxi, vpyi, vpzi, vpw);
 
-    v4sf vpi_e = _mm256_extractf128_ps(vpxi, 1);
-    v4sf vpi_f = _mm256_extractf128_ps(vpyi, 1);
-    v4sf vpi_g = _mm256_extractf128_ps(vpzi, 1);
-    v4sf vpi_h = _mm_setzero_ps();
-
-    _MM_TRANSPOSE4_PS(vpi_a, vpi_b, vpi_c, vpi_d);
-    _MM_TRANSPOSE4_PS(vpi_e, vpi_f, vpi_g, vpi_h);
-
-    _mm256_store_ps((float*)(p + i), _mm256_set_m128(vpi_b, vpi_a));
-    _mm256_store_ps((float*)(p + i + 2), _mm256_set_m128(vpi_d, vpi_c));
-    _mm256_store_ps((float*)(p + i + 4), _mm256_set_m128(vpi_f, vpi_e));
-    _mm256_store_ps((float*)(p + i + 6), _mm256_set_m128(vpi_h, vpi_g));
+    _mm256_storeu2_m128((float*)(p + i + 4), (float*)(p + i    ), vpxi);
+    _mm256_storeu2_m128((float*)(p + i + 5), (float*)(p + i + 1), vpyi);
+    _mm256_storeu2_m128((float*)(p + i + 6), (float*)(p + i + 2), vpzi);
+    _mm256_storeu2_m128((float*)(p + i + 7), (float*)(p + i + 3), vpw);
   }
   for (int i = (N / 8) * 8; i < N; i++) {
     const v8sf vqxi = _mm256_broadcast_ss(&q[i].x);
@@ -316,70 +281,39 @@ calc_intrin8x1() {
       v8sf vr6 = vr2 * vr2 * vr2;
       v8sf vdf = (vc24 * vr6 - vc48) / (vr6 * vr6 * vr2);
 
-      v8sf vdfx = vdf * vdx;
-      v8sf vdfy = vdf * vdy;
-      v8sf vdfz = vdf * vdz;
+      vpxi += vdf * vdx;
+      vpyi += vdf * vdy;
+      vpzi += vdf * vdz;
 
-      vpxi += vdfx;
-      vpyi += vdfy;
-      vpzi += vdfz;
+      vpxj -= vdf * vdx;
+      vpyj -= vdf * vdy;
+      vpzj -= vdf * vdz;
 
-      vpxj -= vdfx;
-      vpyj -= vdfy;
-      vpzj -= vdfz;
+      transpose_4x4x2(vpxj, vpyj, vpzj, vpw);
 
-      v4sf vpj_a = _mm256_extractf128_ps(vpxj, 0);
-      v4sf vpj_b = _mm256_extractf128_ps(vpyj, 0);
-      v4sf vpj_c = _mm256_extractf128_ps(vpzj, 0);
-      v4sf vpj_d = _mm_setzero_ps();
-
-      v4sf vpj_e = _mm256_extractf128_ps(vpxj, 1);
-      v4sf vpj_f = _mm256_extractf128_ps(vpyj, 1);
-      v4sf vpj_g = _mm256_extractf128_ps(vpzj, 1);
-      v4sf vpj_h = _mm_setzero_ps();
-
-      _MM_TRANSPOSE4_PS(vpj_a, vpj_b, vpj_c, vpj_d);
-      _MM_TRANSPOSE4_PS(vpj_e, vpj_f, vpj_g, vpj_h);
-
-      _mm_store_ps((float*)(p + j_a), vpj_a);
-      _mm_store_ps((float*)(p + j_b), vpj_b);
-      _mm_store_ps((float*)(p + j_c), vpj_c);
-      _mm_store_ps((float*)(p + j_d), vpj_d);
-      _mm_store_ps((float*)(p + j_e), vpj_e);
-      _mm_store_ps((float*)(p + j_f), vpj_f);
-      _mm_store_ps((float*)(p + j_g), vpj_g);
-      _mm_store_ps((float*)(p + j_h), vpj_h);
+      _mm256_storeu2_m128((float*)(p + j_e), (float*)(p + j_a), vpxj);
+      _mm256_storeu2_m128((float*)(p + j_f), (float*)(p + j_b), vpyj);
+      _mm256_storeu2_m128((float*)(p + j_g), (float*)(p + j_c), vpzj);
+      _mm256_storeu2_m128((float*)(p + j_h), (float*)(p + j_d), vpw );
     }
     // horizontal sum
-    v4sf vpi_a = _mm256_extractf128_ps(vpxi, 0);
-    v4sf vpi_b = _mm256_extractf128_ps(vpyi, 0);
-    v4sf vpi_c = _mm256_extractf128_ps(vpzi, 0);
-    v4sf vpi_d = _mm_setzero_ps();
-
-    v4sf vpi_e = _mm256_extractf128_ps(vpxi, 1);
-    v4sf vpi_f = _mm256_extractf128_ps(vpyi, 1);
-    v4sf vpi_g = _mm256_extractf128_ps(vpzi, 1);
-    v4sf vpi_h = _mm_setzero_ps();
-
-    _MM_TRANSPOSE4_PS(vpi_a, vpi_b, vpi_c, vpi_d);
-    _MM_TRANSPOSE4_PS(vpi_e, vpi_f, vpi_g, vpi_h);
-
-    v4sf vpi = vpi_a + vpi_b + vpi_c + vpi_d
-      + vpi_e + vpi_f + vpi_g + vpi_h;
+    transpose_4x4x2(vpxi, vpyi, vpzi, vpw);
+    v8sf vpi_hilo = vpxi + vpyi + vpzi + vpw;
+    v8sf vpi_lohi = _mm256_permute2f128_ps(vpi_hilo, vpi_hilo, 0x01);
+    v8sf vpi = vpi_hilo + vpi_lohi;
 
     // store
-    vpi += static_cast<v4sf>(_mm_load_ps((float*)(p + i)));
-    _mm_store_ps((float*)(p + i), vpi);
+    vpi += static_cast<v8sf>(_mm256_loadu_ps((float*)(p + i)));
+    _mm_store_ps((float*)(p + i), _mm256_castps256_ps128(vpi));
 
     for (int k = (M / 8) * 8; k < M; k++) {
       const auto j = list[k];
       const auto dx = q[j].x - q[i].x;
       const auto dy = q[j].y - q[i].y;
       const auto dz = q[j].z - q[i].z;
-      const auto r2 = (dx * dx + dy * dy + dz * dz);
+      const auto r2 = (eps2 + dx * dx + dy * dy + dz * dz);
       const auto r6 = r2 * r2 * r2;
-      auto df = (24.0f * r6 - 48.0f) / (r6 * r6 * r2) * dt;
-      if (i == j) df = 0.0f;
+      const auto df = (24.0f * dt * r6 - 48.0f * dt) / (r6 * r6 * r2);
       p[i].x += df * dx;
       p[i].y += df * dy;
       p[i].z += df * dz;
@@ -387,7 +321,7 @@ calc_intrin8x1() {
       p[j].y -= df * dy;
       p[j].z -= df * dz;
     }
-  }
+    }
 }
 //------------------------------------------------------------------------
 void
@@ -416,7 +350,7 @@ reference(void) {
       const auto dz = q[j].z - q[i].z;
       const auto r2 = (eps2 + dx * dx + dy * dy + dz * dz);
       const auto r6 = r2 * r2 * r2;
-      auto df = (c24 * r6 - c48) / (r6 * r6 * r2);
+      const auto df = (c24 * r6 - c48) / (r6 * r6 * r2);
       p[i].x += df * dx;
       p[i].y += df * dy;
       p[i].z += df * dz;
@@ -463,15 +397,15 @@ main(int argc, char* argv[]) {
     if (std::atoi(argv[4]))
       verbose = true;
 
-  q = new float4 [N];
-  p = new float4 [N];
+  q = new float4 [N + 1];
+  p = new float4 [N + 1];
   posix_memalign((void**)(&list), 32, sizeof(int32_t) * M);
 
   gen_neighlist(rand_seed);
 
   std::cout << N << " " << M << " ";
 
-  const int num_loop = 30;
+  const int num_loop = 1;
 
   init();
 #ifdef USE1x8
