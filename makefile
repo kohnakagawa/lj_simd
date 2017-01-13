@@ -1,6 +1,6 @@
-TARGET= aos.out aos_pair.out aos_intrin.out soa.out soa_pair.out soa_intrin.out aos_intrin_mat_transpose.out comp_1x4.out comp_4x1.out comp_ref.out
+TARGET= aos.out aos_pair.out aos_intrin.out soa.out soa_pair.out soa_intrin.out aos_intrin_mat_transpose.out comp_1x4.out comp_4x1.out comp_ref_4.out comp_8x1_v1.out comp_8x1_v2.out comp_1x8_v1.out comp_1x8_v2.out comp_ref_8.out
 
-ASM = force_aos.s force_soa.s comp_4x1_1x4.s
+ASM = force_aos.s force_soa.s comp_4x1_1x4.s comp_8x1_1x8.s
 
 all: $(TARGET) $(ASM)
 
@@ -36,11 +36,26 @@ comp_1x4.out: comp_4x1_1x4.cpp
 comp_4x1.out: comp_4x1_1x4.cpp
 	icpc -O3 -xHOST -std=c++11 -DUSE4x1 $< -o $@
 
-comp_ref.out: comp_4x1_1x4.cpp
+comp_ref_4.out: comp_4x1_1x4.cpp
+	icpc -O3 -xHOST -std=c++11 -DREFERENCE $< -o $@
+
+comp_1x8_v1.out: comp_8x1_1x8.cpp
+	icpc -O3 -xHOST -std=c++11 -DUSE1x8_v1 $< -o $@
+
+comp_1x8_v2.out: comp_8x1_1x8.cpp
+	icpc -O3 -xHOST -std=c++11 -DUSE1x8_v2 $< -o $@
+
+comp_8x1_v1.out: comp_8x1_1x8.cpp
+	icpc -O3 -xHOST -std=c++11 -DUSE8x1_v1 $< -o $@
+
+comp_8x1_v2.out: comp_8x1_1x8.cpp
+	icpc -O3 -xHOST -std=c++11 -DUSE8x1_v2 $< -o $@
+
+comp_ref_8.out: comp_8x1_1x8.cpp
 	icpc -O3 -xHOST -std=c++11 -DREFERENCE $< -o $@
 
 clean:
-	rm -f $(TARGET)
+	rm -f $(TARGET) $(ASM)
 
 test: aos_pair.out aos_intrin.out soa_pair.out soa_intrin.out aos_intrin_mat_transpose.out
 	./aos_pair.out > aos_pair.dat
