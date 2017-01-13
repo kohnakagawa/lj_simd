@@ -8,9 +8,10 @@
 #include <random>
 #include <algorithm>
 //------------------------------------------------------------------------
-int N = 20000;
-int M = 100;
+int N = 100003;
+int M = 203;
 const double dt = 0.01;
+const double eps2 = (1.0 / 256.0) * (1.0 / 256.0);
 struct double4 { double x, y, z, w; };
 double4* __restrict q = nullptr;
 double4* __restrict p = nullptr;
@@ -31,21 +32,18 @@ print256(v4df r) {
 //------------------------------------------------------------------------
 void
 calc_intrin1x4() {
-  const v4df vc24 = _mm256_set_pd(24 * dt, 24 * dt, 24 * dt, 24 * dt);
-  const v4df vc48 = _mm256_set_pd(48 * dt, 48 * dt, 48 * dt, 48 * dt);
-  const v4df vzero = _mm256_setzero_pd();
+  const v4df vc24 = _mm256_set1_pd(24.0 * dt);
+  const v4df vc48 = _mm256_set1_pd(48.0 * dt);
+  const v4df veps2 = _mm256_set1_pd(eps2);
   for (int i = 0; i < N; i++) {
     const v4df vqi = _mm256_load_pd((double*)(q + i));
-    v4df vpi = _mm256_load_pd((double*)(p + i));
-    v4di vi_id = _mm256_set1_epi64x(i);
+    v4df vpi = _mm256_setzero_pd();
+
     for (int k = 0; k < (M / 4) * 4; k += 4) {
       const auto j_a = list[k];
       const auto j_b = list[k + 1];
       const auto j_c = list[k + 2];
       const auto j_d = list[k + 3];
-
-      v4di vj_id = _mm256_set_epi64x(j_d, j_c, j_b, j_a);
-      v4df mask = _mm256_castsi256_pd(_mm256_cmpeq_epi64(vi_id, vj_id));
 
       v4df vqj_a = _mm256_load_pd((double*)(q + j_a));
       v4df vdq_a = (vqj_a - vqi);
@@ -68,11 +66,9 @@ calc_intrin1x4() {
       v4df vdy = _mm256_permute2f128_pd(tmp1, tmp3, 0x20);
       v4df vdz = _mm256_permute2f128_pd(tmp0, tmp2, 0x31);
 
-      v4df vr2 = vdx * vdx + vdy * vdy + vdz * vdz;
+      v4df vr2 = vdx * vdx + vdy * vdy + vdz * vdz + veps2;
       v4df vr6 = vr2 * vr2 * vr2;
       v4df vdf = (vc24 * vr6 - vc48) / (vr6 * vr6 * vr2);
-
-      vdf = _mm256_blendv_pd(vdf, vzero, mask);
 
       v4df vdf_a = _mm256_permute4x64_pd(vdf, 0);
       v4df vdf_b = _mm256_permute4x64_pd(vdf, 85);
@@ -99,16 +95,17 @@ calc_intrin1x4() {
       vpj_d -= vdq_d * vdf_d;
       _mm256_store_pd((double*)(p + j_d), vpj_d);
     }
+    vpi += (v4df)(_mm256_load_pd((double*)(p + i)));
     _mm256_store_pd((double*)(p + i), vpi);
+
     for (int k = (M / 4) * 4; k < M; k++) {
       const auto j = list[k];
-      const double dx = q[j].x - q[i].x;
-      const double dy = q[j].y - q[i].y;
-      const double dz = q[j].z - q[i].z;
-      const double r2 = (dx * dx + dy * dy + dz * dz);
-      double r6 = r2 * r2 * r2;
-      double df = (24.0 * r6 - 48.0) / (r6 * r6 * r2) * dt;
-      if (i == j) df = 0.0;
+      const auto dx = q[j].x - q[i].x;
+      const auto dy = q[j].y - q[i].y;
+      const auto dz = q[j].z - q[i].z;
+      const auto r2 = (eps2 + dx * dx + dy * dy + dz * dz);
+      const auto r6 = r2 * r2 * r2;
+      const auto df = (24.0 * dt * r6 - 48.0 * dt) / (r6 * r6 * r2);
       p[i].x += df * dx;
       p[i].y += df * dy;
       p[i].z += df * dz;
@@ -121,9 +118,9 @@ calc_intrin1x4() {
 //------------------------------------------------------------------------
 void
 calc_intrin4x1() {
-  const v4df vc24 = _mm256_set_pd(24 * dt, 24 * dt, 24 * dt, 24 * dt);
-  const v4df vc48 = _mm256_set_pd(48 * dt, 48 * dt, 48 * dt, 48 * dt);
-  const v4df vzero = _mm256_setzero_pd();
+  const v4df vc24 = _mm256_set1_pd(24.0 * dt);
+  const v4df vc48 = _mm256_set1_pd(48.0 * dt);
+  const v4df veps2 = _mm256_set1_pd(eps2);
   for (int i = 0; i < (N / 4) * 4; i += 4) {
     const v4df vqi_a = _mm256_load_pd((double*)(q + i));
     v4df vpi_a = _mm256_setzero_pd();
@@ -134,12 +131,8 @@ calc_intrin4x1() {
     const v4df vqi_d = _mm256_load_pd((double*)(q + i + 3));
     v4df vpi_d = _mm256_setzero_pd();
 
-    v4di vi_id = _mm256_set_epi64x(i + 3, i + 2, i + 1, i);
     for (int k = 0; k < M; k++) {
       const auto j = list[k];
-      v4di vj_id = _mm256_set1_epi64x(j);
-
-      v4df mask = _mm256_castsi256_pd(_mm256_cmpeq_epi64(vi_id, vj_id));
 
       v4df vqj = _mm256_load_pd((double*)(q + j));
       v4df vpj = _mm256_load_pd((double*)(p + j));
@@ -158,11 +151,9 @@ calc_intrin4x1() {
       v4df vdy = _mm256_permute2f128_pd(tmp1, tmp3, 0x20);
       v4df vdz = _mm256_permute2f128_pd(tmp0, tmp2, 0x31);
 
-      v4df vr2 = vdx * vdx + vdy * vdy + vdz * vdz;
+      v4df vr2 = vdx * vdx + vdy * vdy + vdz * vdz + veps2;
       v4df vr6 = vr2 * vr2 * vr2;
       v4df vdf = (vc24 * vr6 - vc48) / (vr6 * vr6 * vr2);
-
-      vdf = _mm256_blendv_pd(vdf, vzero, mask);
 
       v4df vdf_a = _mm256_permute4x64_pd(vdf, 0);
       v4df vdf_b = _mm256_permute4x64_pd(vdf, 85);
@@ -184,30 +175,27 @@ calc_intrin4x1() {
       _mm256_store_pd((double*)(p + j), vpj);
     }
 
-    vpi_a += static_cast<v4df>(_mm256_load_pd((double*)(p + i)));
+    vpi_a += (v4df)(_mm256_load_pd((double*)(p + i)));
     _mm256_store_pd((double*)(p + i), vpi_a);
 
-    vpi_b += static_cast<v4df>(_mm256_load_pd((double*)(p + i + 1)));
+    vpi_b += (v4df)(_mm256_load_pd((double*)(p + i + 1)));
     _mm256_store_pd((double*)(p + i + 1), vpi_b);
 
-    vpi_c += static_cast<v4df>(_mm256_load_pd((double*)(p + i + 2)));
+    vpi_c += (v4df)(_mm256_load_pd((double*)(p + i + 2)));
     _mm256_store_pd((double*)(p + i + 2), vpi_c);
 
-    vpi_d += static_cast<v4df>(_mm256_load_pd((double*)(p + i + 3)));
+    vpi_d += (v4df)(_mm256_load_pd((double*)(p + i + 3)));
     _mm256_store_pd((double*)(p + i + 3), vpi_d);
   }
   for (int i = (N / 4) * 4; i < N; i++) {
     const v4df vqi = _mm256_load_pd((double*)(q + i));
-    v4df vpi = _mm256_load_pd((double*)(p + i));
-    v4di vi_id = _mm256_set1_epi64x(i);
+    v4df vpi = _mm256_setzero_pd();
+
     for (int k = 0; k < (M / 4) * 4; k += 4) {
       const auto j_a = list[k];
       const auto j_b = list[k + 1];
       const auto j_c = list[k + 2];
       const auto j_d = list[k + 3];
-
-      v4di vj_id = _mm256_set_epi64x(j_d, j_c, j_b, j_a);
-      v4df mask = _mm256_castsi256_pd(_mm256_cmpeq_epi64(vi_id, vj_id));
 
       v4df vqj_a = _mm256_load_pd((double*)(q + j_a));
       v4df vdq_a = (vqj_a - vqi);
@@ -230,11 +218,9 @@ calc_intrin4x1() {
       v4df vdy = _mm256_permute2f128_pd(tmp1, tmp3, 0x20);
       v4df vdz = _mm256_permute2f128_pd(tmp0, tmp2, 0x31);
 
-      v4df vr2 = vdx * vdx + vdy * vdy + vdz * vdz;
+      v4df vr2 = vdx * vdx + vdy * vdy + vdz * vdz + veps2;
       v4df vr6 = vr2 * vr2 * vr2;
       v4df vdf = (vc24 * vr6 - vc48) / (vr6 * vr6 * vr2);
-
-      vdf = _mm256_blendv_pd(vdf, vzero, mask);
 
       v4df vdf_a = _mm256_permute4x64_pd(vdf, 0);
       v4df vdf_b = _mm256_permute4x64_pd(vdf, 85);
@@ -261,16 +247,17 @@ calc_intrin4x1() {
       vpj_d -= vdq_d * vdf_d;
       _mm256_store_pd((double*)(p + j_d), vpj_d);
     }
+    vpi += (v4df)(_mm256_load_pd((double*)(p + i)));
     _mm256_store_pd((double*)(p + i), vpi);
+
     for (int k = (M / 4) * 4; k < M; k++) {
       const auto j = list[k];
-      const double dx = q[j].x - q[i].x;
-      const double dy = q[j].y - q[i].y;
-      const double dz = q[j].z - q[i].z;
-      const double r2 = (dx * dx + dy * dy + dz * dz);
-      double r6 = r2 * r2 * r2;
-      double df = (24.0 * r6 - 48.0) / (r6 * r6 * r2) * dt;
-      if (i == j) df = 0.0;
+      const auto dx = q[j].x - q[i].x;
+      const auto dy = q[j].y - q[i].y;
+      const auto dz = q[j].z - q[i].z;
+      const auto r2 = (eps2 + dx * dx + dy * dy + dz * dz);
+      const auto r6 = r2 * r2 * r2;
+      const auto df = (24.0 * dt * r6 - 48.0 * dt) / (r6 * r6 * r2);
       p[i].x += df * dx;
       p[i].y += df * dy;
       p[i].z += df * dz;
@@ -283,10 +270,12 @@ calc_intrin4x1() {
 //------------------------------------------------------------------------
 void
 init(void) {
+  std::mt19937 mt;
+  std::uniform_real_distribution<> ud(0.0, 10.0);
   for (int i = 0; i < N; i++) {
-    q[i].x = 1.0 + 0.4 * i;
-    q[i].y = 2.0 + 0.5 * i;
-    q[i].z = 3.0 + 0.6 * i;
+    q[i].x = ud(mt);
+    q[i].y = ud(mt);
+    q[i].z = ud(mt);
     p[i].x = 0.0;
     p[i].y = 0.0;
     p[i].z = 0.0;
@@ -295,16 +284,17 @@ init(void) {
 //------------------------------------------------------------------------
 void
 reference(void) {
+  const auto c24 = 24.0 * dt;
+  const auto c48 = 48.0 * dt;
   for (int i = 0; i < N; i++) {
     for (int k = 0; k < M; k++) {
       const auto j = list[k];
-      const double dx = q[j].x - q[i].x;
-      const double dy = q[j].y - q[i].y;
-      const double dz = q[j].z - q[i].z;
-      const double r2 = (dx * dx + dy * dy + dz * dz);
-      double r6 = r2 * r2 * r2;
-      double df = (24.0 * r6 - 48.0) / (r6 * r6 * r2) * dt;
-      if (i == j) df = 0.0;
+      const auto dx = q[j].x - q[i].x;
+      const auto dy = q[j].y - q[i].y;
+      const auto dz = q[j].z - q[i].z;
+      const auto r2 = (eps2 + dx * dx + dy * dy + dz * dz);
+      const auto r6 = r2 * r2 * r2;
+      const auto df = (c24 * r6 - c48) / (r6 * r6 * r2);
       p[i].x += df * dx;
       p[i].y += df * dy;
       p[i].z += df * dz;
