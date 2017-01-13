@@ -1,16 +1,13 @@
 #!/bin/sh
 
-make clean
-make
-
-execs=("./comp_1x4.out" "./comp_4x1.out" "./comp_ref_4.out" "comp_1x8_v2.out" "comp_8x1_v2.out" "./comp_ref_8.out")
+execs=("./comp_1x4.out" "./comp_4x1.out" "./comp_ref_4.out" "./comp_1x8_v2.out" "./comp_8x1_v2.out" "./comp_ref_8.out")
 files=("1x4.txt" "4x1.txt" "ref_4.txt" "1x8.txt" "8x1.txt" "ref_8.txt")
 Ni="100003"
 seed=$RANDOM
 
 make ${execs[@]}
 
-for i in `seq 0 2`
+for i in `seq 0 5`
 do
     rm -f ${files[$i]}
     touch ${files[$i]}
