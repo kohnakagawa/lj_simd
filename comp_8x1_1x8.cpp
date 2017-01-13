@@ -665,7 +665,7 @@ main(int argc, char* argv[]) {
     rand_seed = std::atoi(argv[3]);
   }
 
-  bool verbose = true;
+  bool verbose = false;
   if (argc == 5)
     if (std::atoi(argv[4]))
       verbose = true;
@@ -678,7 +678,7 @@ main(int argc, char* argv[]) {
 
   std::cout << N << " " << M << " ";
 
-  const int num_loop = 1;
+  const int num_loop = 10;
 
   init();
 #ifdef USE1x8_v1

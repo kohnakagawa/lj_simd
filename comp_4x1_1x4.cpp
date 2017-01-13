@@ -359,7 +359,7 @@ main(int argc, char* argv[]) {
 
   std::cout << N << " " << M << " ";
 
-  const int num_loop = 30;
+  const int num_loop = 10;
 
   init();
 #ifdef USE1x4
