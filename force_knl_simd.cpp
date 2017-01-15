@@ -30,6 +30,21 @@ void print512(v8df r) {
   std::cerr << std::endl;
 }
 
+static inline v8df _mm512_load2_m256d(const double* hiaddr,
+                                      const double* loaddr) {
+  v8df ret;
+  ret = _mm512_insertf64x4(ret, _mm256_load_pd(loaddr), 0x0);
+  ret = _mm512_insertf64x4(ret, _mm256_load_pd(hiaddr), 0x1);
+  return ret;
+}
+
+static inline void _mm512_store2_m256d(double* hiaddr,
+                                       double* loaddr,
+                                       const v8df& dat) {
+  _mm256_store_pd(loaddr, _mm512_castpd512_pd256(dat));
+  _mm256_store_pd(hiaddr, _mm512_extractf64x4_pd(dat, 0x1));
+}
+
 static inline void transpose_4x4x2(v8df& va,
                                    v8df& vb,
                                    v8df& vc,
@@ -52,12 +67,29 @@ static inline void transpose_4x4x2(v8df& va,
   vd = _mm512_permutex2var_pd(t_b, _mm512_set_epi64(0xf, 0xe, 0x7, 0x6, 0xb, 0xa, 0x3, 0x2), t_d);
 }
 
+static inline void transpose_4x4x2(const v8df& va,
+                                   const v8df& vb,
+                                   const v8df& vc,
+                                   const v8df& vd,
+                                   v8df& vx,
+                                   v8df& vy,
+                                   v8df& vz) {
+  v8df t_a = _mm512_unpacklo_pd(va, vb);
+  v8df t_b = _mm512_unpackhi_pd(va, vb);
+  v8df t_c = _mm512_unpacklo_pd(vc, vd);
+  v8df t_d = _mm512_unpackhi_pd(vc, vd);
+
+  vx = _mm512_permutex2var_pd(t_a, _mm512_set_epi64(0xd, 0xc, 0x5, 0x4, 0x9, 0x8, 0x1, 0x0), t_c);
+  vy = _mm512_permutex2var_pd(t_b, _mm512_set_epi64(0xd, 0xc, 0x5, 0x4, 0x9, 0x8, 0x1, 0x0), t_d);
+  vz = _mm512_permutex2var_pd(t_a, _mm512_set_epi64(0xf, 0xe, 0x7, 0x6, 0xb, 0xa, 0x3, 0x2), t_c);
+}
+
 // with gather and scatter
 void calc_intrin1x8_v1() {
   const v8df vc24  = _mm512_set1_pd(24.0 * dt);
   const v8df vc48  = _mm512_set1_pd(48.0 * dt);
   const v8df veps2 = _mm512_set1_pd(eps2);
-  v8df vpw = _mm512_setzero_pd();
+
   for (int i = 0; i < N; i++) {
     v8df vqxi = _mm512_set1_pd(q[i].x);
     v8df vqyi = _mm512_set1_pd(q[i].y);
@@ -120,13 +152,13 @@ void calc_intrin1x8_v1() {
                            8);
     }
     // horizontal sum
+    v8df vpw = _mm512_setzero_pd();
     transpose_4x4x2(vpxi, vpyi, vpzi, vpw);
-    /*
-      vpxi = {vpia, vpie}
-      vpyi = {vpib, vpif}
-      vpzi = {vpic, vpig}
-      vpw  = {vpid, vpih}
-     */
+    // vpxi = {vpia, vpie}
+    // vpyi = {vpib, vpif}
+    // vpzi = {vpic, vpig}
+    // vpw  = {vpid, vpih}
+
     v8df vpi_hilo = vpxi + vpyi + vpzi + vpw;
     v8df vpi_lohi = _mm512_permutexvar_pd(_mm512_set_epi64(0x3, 0x2, 0x1, 0x0, 0x7, 0x6, 0x5, 0x4),
                                           vpi_hilo);
@@ -138,6 +170,114 @@ void calc_intrin1x8_v1() {
                                                     _mm256_load_pd(
                                                                    reinterpret_cast<double*>(p + i))));
     _mm256_store_pd(reinterpret_cast<double*>(p + i), _mm512_castpd512_pd256(vpi));
+
+    for (int k = (M / 8) * 8; k < M; k++) {
+      const auto j = list[k];
+      const auto dx = q[j].x - q[i].x;
+      const auto dy = q[j].y - q[i].y;
+      const auto dz = q[j].z - q[i].z;
+      const auto r2 = (eps2 + dx * dx + dy * dy + dz * dz);
+      const auto r6 = r2 * r2 * r2;
+      const auto df = (24.0 * dt * r6 - 48.0 * dt) / (r6 * r6 * r2);
+      p[i].x += df * dx;
+      p[i].y += df * dy;
+      p[i].z += df * dz;
+      p[j].x -= df * dx;
+      p[j].y -= df * dy;
+      p[j].z -= df * dz;
+    }
+  }
+}
+
+// without gather and scatter
+void calc_intrin1x8_v2() {
+  const v8df vc24  = _mm512_set1_pd(24.0 * dt);
+  const v8df vc48  = _mm512_set1_pd(48.0 * dt);
+  const v8df veps2 = _mm512_set1_pd(eps2);
+  for (int i = 0; i < N; i++) {
+    v8df vqi = _mm512_castpd256_pd512(_mm256_load_pd(reinterpret_cast<const double*>(q + i)));
+    vqi = _mm512_insertf64x4(vqi, _mm512_castpd512_pd256(vqi), 0x1);
+    v8df vpi = _mm512_setzero_pd();
+
+    for (int k = 0; k < (M / 8) * 8; k += 8) {
+      const auto j_a = list[k    ];
+      const auto j_b = list[k + 1];
+      const auto j_c = list[k + 2];
+      const auto j_d = list[k + 3];
+
+      const auto j_e = list[k + 4];
+      const auto j_f = list[k + 5];
+      const auto j_g = list[k + 6];
+      const auto j_h = list[k + 7];
+
+      v8df vpj_ea = _mm512_load2_m256d(reinterpret_cast<const double*>(p + j_e),
+                                       reinterpret_cast<const double*>(p + j_a));
+      v8df vpj_fb = _mm512_load2_m256d(reinterpret_cast<const double*>(p + j_f),
+                                       reinterpret_cast<const double*>(p + j_b));
+      v8df vpj_gc = _mm512_load2_m256d(reinterpret_cast<const double*>(p + j_g),
+                                       reinterpret_cast<const double*>(p + j_c));
+      v8df vpj_hd = _mm512_load2_m256d(reinterpret_cast<const double*>(p + j_h),
+                                       reinterpret_cast<const double*>(p + j_d));
+
+      v8df vqj_ea = _mm512_load2_m256d(reinterpret_cast<const double*>(q + j_e),
+                                       reinterpret_cast<const double*>(q + j_a));
+      v8df vqj_fb = _mm512_load2_m256d(reinterpret_cast<const double*>(q + j_f),
+                                       reinterpret_cast<const double*>(q + j_b));
+      v8df vqj_gc = _mm512_load2_m256d(reinterpret_cast<const double*>(q + j_g),
+                                       reinterpret_cast<const double*>(q + j_c));
+      v8df vqj_hd = _mm512_load2_m256d(reinterpret_cast<const double*>(q + j_h),
+                                       reinterpret_cast<const double*>(q + j_d));
+
+      v8df vdq_ea = vqj_ea - vqi;
+      v8df vdq_fb = vqj_fb - vqi;
+      v8df vdq_gc = vqj_gc - vqi;
+      v8df vdq_hd = vqj_hd - vqi;
+
+      v8df vdx, vdy, vdz;
+      transpose_4x4x2(vdq_ea, vdq_fb, vdq_gc, vdq_hd,
+                      vdx, vdy, vdz);
+
+      v8df vr2 = veps2 + vdx * vdx + vdy * vdy + vdz * vdz;
+      v8df vr6 = vr2 * vr2 * vr2;
+      v8df vdf = (vc24 * vr6 - vc48) / (vr6 * vr6 * vr2);
+
+      v8df vdf_ea = _mm512_permutex_pd(vdf, 0x00);
+      v8df vdf_fb = _mm512_permutex_pd(vdf, 0x55);
+      v8df vdf_gc = _mm512_permutex_pd(vdf, 0xaa);
+      v8df vdf_hd = _mm512_permutex_pd(vdf, 0xff);
+
+      vpi    += vdf_ea * vdq_ea;
+      vpj_ea -= vdf_ea * vdq_ea;
+
+      vpi    += vdf_fb * vdq_fb;
+      vpj_fb -= vdf_fb * vdq_fb;
+
+      vpi    += vdf_gc * vdq_gc;
+      vpj_gc -= vdf_gc * vdq_gc;
+
+      vpi    += vdf_hd * vdq_hd;
+      vpj_hd -= vdf_hd * vdq_hd;
+
+      _mm512_store2_m256d(reinterpret_cast<double*>(p + j_e),
+                          reinterpret_cast<double*>(p + j_a),
+                          vpj_ea);
+      _mm512_store2_m256d(reinterpret_cast<double*>(p + j_f),
+                          reinterpret_cast<double*>(p + j_b),
+                          vpj_fb);
+      _mm512_store2_m256d(reinterpret_cast<double*>(p + j_g),
+                          reinterpret_cast<double*>(p + j_c),
+                          vpj_gc);
+      _mm512_store2_m256d(reinterpret_cast<double*>(p + j_h),
+                          reinterpret_cast<double*>(p + j_d),
+                          vpj_hd);
+    }
+    vpi = _mm512_add_pd(vpi,
+                        _mm512_permutexvar_pd(_mm512_set_epi64(0x3, 0x2, 0x1, 0x0, 0x7, 0x6, 0x5, 0x4),
+                                              vpi));
+    vpi = _mm512_add_pd(vpi,
+                        _mm512_castpd256_pd512(_mm256_load_pd(reinterpret_cast<const double*>(p + i))));
+    _mm256_store_pd(reinterpret_cast<double*>(p + i),
+                    _mm512_castpd512_pd256(vpi));
 
     for (int k = (M / 8) * 8; k < M; k++) {
       const auto j = list[k];
@@ -239,6 +379,8 @@ int main(int argc, char* argv[]) {
   init();
 #ifdef USE1x8_v1
   BENCH(calc_intrin1x8_v1, num_loop);
+#elif USE1x8_v2
+  BENCH(calc_intrin1x8_v2, num_loop);
 #elif REFERENCE
   BENCH(reference, num_loop);
 #endif
